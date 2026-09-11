@@ -1,0 +1,686 @@
+# LLM & APP (w13 2026 Spring)
+
+**Tuesday 10:10-13:00, E307 Engineering II**
+
+**Instructor: Yu-Chieh Jack Ho**
+
+**Office:** A302, Engineering II  | **Office hours:** Weds 10:30-12:30 | **Email:** yc.ho@gms.ndhu.edu.tw
+
+# Recap:
+
+- **AlphaEvolve: A brilliant combination of coding agents & evolutionary algorithms**
+- **OpenEvolve**: The most advanced open-source implementation of above framework**.**
+    - Ran an FunctionMinMax example, and you’ve seem a visualization like this
+        
+        ![image.png](attachment:8e391404-9e47-44ba-bcc8-19f5b6b2400c:image.png)
+        
+- Questions:
+    - What’s the input/output of **AlphaEvolve/OpenEvolve?**
+    - What are the “nodes” in the graph?
+    - What’s the color in the graph represent?
+
+# Agenda:
+
+- Recap
+- Seminar
+- **OpenEvolve: Deep Dive and Ready for Your Evolution**
+
+# Agent Crew Test **Update: Option to Re-run on New Testing Data**
+
+#### **Previously Shared Datasets**
+
+- **80/20 Temporal Cutoff:** We retrieved all Yelp review timestamps and used the chronological 80% mark as the boundary to separate the Training and Testing sets.
+    
+    ![image.png](attachment:8424b1cd-7620-4b4d-93b9-63a2fbf85b65:image.png)
+    
+- **Strict Intersection Filtering:** To ensure that both Users and Items appear in both the Train and Test sets and eliminate the cold-start problem during evaluation, we implemented multi-stage scripts to filter for only the active users and stable businesses present across *both* splits. This heavily reduced data noise, generating a perfectly clean set of `train_review.json` and `test_review.json` files, alongside the corresponding `filtered_*` metadata.
+    - `train_review.json`: 382,886 reviews (shared)
+    - `test_review.json`: 148,701 reviews (NOT shared)
+    - `filtered_user.json`: 26,593 active users (shared)
+    - `filtered_item.json`: 22,536 frequently reviewed businesses (shared)
+1. **Local Sub-graph Extraction Dataset (shared)** 
+    - This is a closed, high-density subset tailored for algorithm development, extracted from the parent dataset above. It precisely targets the top 50 hyper-active users (yielding 38 users after final filtering):
+        - `user_subset.json`: 38 records (core hyper-active users)
+        - `item_subset.json`: 432 records (businesses reviewed by these users, serving as sub-graph nodes)
+        - `review_subset.json`: 4,164 records (interaction edges constituting the training graph network / Training Sub-graph edges)
+        - `test_review_subset.json`: 198 records (future reviews in ~~training~~ testing set) strictly matching these 38 users and 432 businesses, used as a streamlined golden validation set)
+- The previous testing set was sampled from the main testing data `test_review.json.` because initially we planned to use the full training and testing sets.
+    - Due to high Agent computation times, we switched to the smaller `*_subset` files.
+        
+        ```python
+        # Previous test_set
+        ```
+
+```python
+[Level 1: Global Training Set]
+Reviews from filtered_user.json: 35
+Reviews for filtered_item.json: 35
+Reviews intersecting both sets: 35
+Neither set: 0
+
+[Level 2: Local Sub-graph (*_subset)]
+Reviews from user_subset.json: 0
+Reviews for item_subset.json: 1
+Reviews intersecting both subsets: 0
+Neither subset: 34
+```
+
+While this testing set was valid, its distribution is not consistent with the `test_review_subset.json`  that I provided, which is
+
+```python
+[Level 2: Local Sub-graph (*_subset)]
+Reviews from user_subset.json: 84
+Reviews for item_subset.json: 106
+Reviews intersecting both subsets: 7
+Neither subset: 15
+```
+
+To fix this, I have resampled a new testing set composed only of reviews “from” the `user_subset` or “for” the `item_subset`. The pipeline will now use this updated set.
+
+```python
+[Level 2: Local Sub-graph (*_subset)]
+Reviews from user_subset.json: 6
+Reviews for item_subset.json: 30
+Reviews intersecting both subsets: 1
+Neither subset: 0
+```
+
+Thank you to Sara for raising questions last week!
+
+- To ensure fairness, every group has the **option** to re-run the test pipeline with this new dataset. If you do, your final score will be based on your latest run.
+    - Let me know if you want to test it again.
+
+# **OpenEvolve: Deep Dive and Ready for Your Evolution**
+
+## Step 0. Requirement
+
+The solution performance for your problem can be **clearly and systematically measured**
+
+## Step 1. Convert your problem into code and define a **systematic** `evaluation function`
+
+**1. Initial Program (`initial_program.py`)**
+
+Your initial program must contain exactly **one** `EVOLVE-BLOCK`:
+
+```python
+# EVOLVE-BLOCK-START
+def minimize_function(func, bounds, max_evals=1000):
+	  # Initial Program (Random Search)
+    best_x, best_val = None, float('inf')
+    for _ in range(max_evals):
+        x = random_point_in_bounds(bounds)
+        val = func(x)
+        if val < best_val:
+            best_x, best_val = x, val
+    return best_x, best_val
+# EVOLVE-BLOCK-END  
+
+# Other functions outside the evolve block
+def helper_function():
+    # This code won't be modified by OpenEvolve
+    pass
+```
+
+**Critical Requirements:**
+
+- ✅ **Exactly one EVOLVE-BLOCK** (not multiple blocks)
+- ✅ Use `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END` markers
+- ✅ Put only the code you want evolved inside the block
+- ✅ Helper functions and imports go outside the block
+
+**2. Evaluator (`evaluator.py`)**
+
+Your evaluator can return either a **dictionary** or an **`EvaluationResult`** object:
+
+    ```python
+def evaluate(program_path: str) -> Dict:
+    """
+    Evaluate the program and return metrics.
+
+    Can return either a dict or EvaluationResult object.
+    Use EvaluationResult if you want to include artifacts for debugging.
+    """
+    try:
+        # Import and run your program
+        # Calculate metrics
+
+        return {
+            'combined_score': 0.8,  # PRIMARY METRIC for evolution (required)
+            'accuracy': 0.9,        # Your custom metrics
+            'speed': 0.7,
+            'robustness': 0.6,
+            # Add any other metrics you want to track
+        }
+    except Exception as e:
+        return {
+            'combined_score': 0.0,  # Always return combined_score, even on error
+            'error': str(e)
+        }
+
+# Or use EvaluationResult for artifacts support:
+from openevolve.evaluation_result import EvaluationResult
+
+def evaluate(program_path: str) -> EvaluationResult:
+    return EvaluationResult(
+        metrics={'combined_score': 0.8, 'accuracy': 0.9},
+        artifacts={'debug_info': 'useful debugging data'}
+    )
+```
+
+**Critical Requirements:**
+
+- ✅ **Must include `'combined_score'`** - this is the primary metric OpenEvolve uses
+- ✅ Higher `combined_score` values should indicate better programs
+    - OpenEvolve relies on these objective scores to decide which code variants survive and continue to evolve.
+- ✅ Handle exceptions and return `combined_score: 0.0` on failure
+- ✅ **Return a dictionary or `EvaluationResult`** - both are supported
+- ✅ Use `EvaluationResult` with artifacts for richer debugging feedback
+
+## Step 2. Set up the evolutionary engines (i.e., LLMs) that will generate code during the evolution in `config.yaml`
+
+```yaml
+# examples/function_minimization/config.yaml
+llm:
+  # Replace with a model available on NVIDIA NIM
+  primary_model: "minimaxai/minimax-m2.7"
+  primary_model_weight: 0.8
+  secondary_model: "minimaxai/minimax-m2.7"
+  secondary_model_weight: 0.2
+
+  # Change the endpoint to the NVIDIA NIM Endpoint
+  api_base: "<https://integrate.api.nvidia.com/v1>"
+```
+
+In **OpenEvolve**, the `primary_model` and `secondary_model` together form a "Hybrid Engine".  In each generation, when the system needs an LLM to "mutate" the code, it invokes the `LLMEnsemble._sample_model()` function in `openevolve/llm/ensemble.py`:
+
+```python
+def _sample_model(self) -> LLMInterface:
+    """Sample a model from the ensemble based on weights"""
+    index = self.random_state.choices(range(len(self.models)), weights=self.weights, k=1)[0]
+    return self.models[index]
+```
+
+Using the above settings in `config.yaml` as an example:
+
+- Every time a new mutant is generated, there is an **80% probability** that the system will call the primary model and a **20% probability** that it will call the secondary model.
+    - Escaping Local Optima.
+        - Different LLMs have different "thought processes”
+    - Balancing Cost and Speed.
+
+### **Evolution Prompts: The Bridge between LLMs and** Evolutionary Algorithms
+
+- Meta prompting: A prompting technique that asking AI to improve the prompts automatically. e.g.,:
+
+```python
+simple_prompt = "Summarize this news article: {article}"
+```
+
+```python
+meta_prompt = """
+Improve the following prompt to generate a more detailed summary. 
+Adhere to prompt engineering best practices. 
+Make sure the structure is clear and intuitive and contains the type of news, tags and sentiment analysis.
+
+{simple_prompt}
+
+Only return the prompt.
+"""
+```
+
+```python
+def get_model_response(messages, model="o1-preview"):
+    response = client.chat.completions.create(
+        messages=messages,
+        model=model,
+    )
+    return response.choices[0].message.content
+
+complex_prompt = get_model_response([{"role": "user", "content": meta_prompt.format(simple_prompt=simple_prompt)}])
+complex_prompt
+```
+
+```python
+"""
+Please read the following news article and provide a comprehensive summary 
+that includes:\n\n1. **Type of News**: Specify the category of the news 
+article (e.g., Politics, Technology, Health, Sports, etc.).\n2. 
+**Summary**: Write a concise and clear summary of the main points, 
+ensuring the structure is logical and intuitive.\n3. **Tags**: List 
+relevant keywords or tags associated with the article.\n4. 
+**Sentiment Analysis**: Analyze the overall sentiment of the article 
+(positive, negative, or neutral) and briefly explain your reasoning.
+\n\n**Article:**\n\n{article}
+"""
+```
+
+### **Dynamic** Meta prompting
+
+![image.png](attachment:38d2e37f-7a9e-4870-90fe-84869f84e05a:image.png)
+
+- During code e**volution**, OpenEvolve d**ynamically** apply meta prompting in every iterations (generations)
+    - An evolution begins with some initial DNAs (e.g., initial program, base system prompt, etc…)
+        
+        ```python
+        # Base system message template for evolution
+        BASE_SYSTEM_TEMPLATE = """You are an expert software developer tasked with iteratively improving a codebase.
+        Your job is to analyze the current program and suggest improvements based on feedback from previous attempts.
+        Focus on making targeted changes that will increase the program's performance metrics.
+        """
+        ```
+        
+    - The evolutionary algorithms decide the way those DNAs evolve (e.g., mutate, crossover, etc…)
+        - 
+        
+        ```python
+        class ProgramDatabase:
+            """
+            Database for storing and sampling programs during evolution
+        
+            The database implements a combination of MAP-Elites algorithm and
+            island-based population model to maintain diversity during evolution.
+            It also tracks the absolute best program separately to ensure it's never lost.
+            """
+        ```
+
+- Discuss in the next sections
+- The progress/results in the current iteration (e.g., program generated, performance metrics, etc.) become new DNAs for the later iterations.
+    - 
+    
+    ```python
+    @dataclass
+    class Program:
+        """Represents a program in the database"""
+    
+        # Program identification
+        id: str
+        code: str
+        changes_description: str = ""  # compact program changes description (via LLM) stored per program
+        language: str = "python"
+    
+        # Performance metrics
+        metrics: Dict[str, float] = field(default_factory=dict)
+    
+        # Derived features
+        complexity: float = 0.0
+        diversity: float = 0.0
+        
+        ...
+    ```
+    
+    ```python
+    ## in class ProgramDatabase:
+    ...
+    
+    # In-memory program storage
+      self.programs: Dict[str, Program] = {}
+      
+    # Prompt log
+    	self.prompts_by_program: Dict[str, Dict[str, Dict[str, str]]] = None
+    
+    ...
+    ```
+    
+- In the next iteration, the **`PromptSampler`** update the prompt by combing previous results into corresponding meta prompting templates, e.g.,
+    - Given
+
+    ```python
+# User message template for full rewrite
+# in openevolve/prompt/templates.py
+FULL_REWRITE_USER_TEMPLATE = """# Current Program Information
+- Current performance metrics: {metrics}
+- Areas identified for improvement: {improvement_areas}
+
+{artifacts}
+
+# Program Evolution History
+{evolution_history}
+
+# Current Program
+```{language}
+{current_program}
+```
+
+# Task
+Rewrite the program to improve its performance on the specified metrics.
+Provide the complete new program code.
+
+IMPORTANT: Make sure your rewritten program maintains the same inputs and outputs
+as the original program, but with improved internal implementation.
+
+```{language}
+# Your rewritten program here
+```
+"""
+
+```
+
+- **`PromptSampler`** fills the placeholders {}s
+1. **`{metrics}` (Current Scores)**
+    - **Source:** Calls `self._format_metrics(program_metrics)`.
+    - **How it works:** It converts the various scores evaluated by `evaluator.py` (e.g., `combined_score: 0.85`, `diversity: 0.2`) into a readable, bulleted string format (`name: value`).
+2. **`{improvement_areas}` (Areas for Improvement)**
+    - **Source:** Calls `self._identify_improvement_areas(...)`.
+    - **How it works:** It compares the scores of the "current program" against its "parent program."
+        - If the score has regressed, it inserts a message like *"This modification caused a drop in score"*;
+        - if the code is too long, it inserts *"Code is too long, please try to streamline it."*
+3. **`{evolution_history}` (Evolutionary History and Inspiration)**
+    - **Source:** Calls `self._format_evolution_history(...)`.
+    - **How it works:** This is the most massive part of the prompt. `PromptSampler` fetches the following from the `ProgramDatabase`:
+        - **Previous Attempts:** Records of recent failed modifications, telling the LLM *"This approach has been tried and throws an error, don't do it again."*
+        - **Top Programs:** A few of the highest-scoring programs across the entire island.
+        - **Inspirations:** Randomly sampled programs from elsewhere to spark the LLM's creativity.
+        
+        All of these are combined into a long Markdown text block and injected into this placeholder.
+        
+        …
+        
+
+---
+
+- The evolutionary engines (LLMs) get the updated prompt and the evolution continue.
+
+#### Updated prompt
+
+```markdown
+# Current Program Information
+- Current performance metrics:
+- combined_score: 1.2148
+- diversity: 0.0000
+- complexity: 0.0512
+- value_score: 0.8562
+
+- Areas identified for improvement:
+- Fitness improved from 0.0000 to 1.2148.
+- Exploring feature region: (Complexity: 5, Diversity: 0)
+- Program length is optimal.
+
+## Artifacts
+### execution_logs
+```
+Evaluation started for search_algorithm.
+Completed 10 runs in 0.05s.
+Note: Search frequently trapped in local minimum at (1.57, -1.57).
+```
+
+# Program Evolution History
+
+## Top Performing Programs
+
+### Program 1 (Score: 1.8423)
+Key Features: combined_score (1.8423), complexity (0.3421), value_score (1.9532)
+```python
+def search_algorithm(iterations=1000, bounds=(-5, 5)):
+    # Simulated Annealing implementation
+    best_x = np.random.uniform(bounds[0], bounds[1])
+    best_y = np.random.uniform(bounds[0], bounds[1])
+    best_value = evaluate_function(best_x, best_y)
+    T = 1.0
+    for i in range(iterations):
+        x = best_x + np.random.normal(0, T)
+        y = best_y + np.random.normal(0, T)
+        x = np.clip(x, bounds[0], bounds[1])
+        y = np.clip(y, bounds[0], bounds[1])
+        value = evaluate_function(x, y)
+        if value < best_value or np.random.random() < np.exp((best_value - value) / T):
+            best_x, best_y, best_value = x, y, value
+        T *= 0.995
+    return best_x, best_y, best_value
+```
+
+## Diverse Programs (Inspirations)
+
+```### Program D1 (Score: 1.5122)
+Type: Highly Diverse Alternative
+Unique Features: Uses mixed iteration structures, Uses numpy heavily.
+```python
+def search_algorithm(iterations=1000, bounds=(-5, 5)):
+    # Grid search approach
+    grid_size = int(np.sqrt(iterations))
+    x_vals = np.linspace(bounds[0], bounds[1], grid_size)
+    y_vals = np.linspace(bounds[0], bounds[1], grid_size)
+    best_val = float('inf')
+    for x in x_vals:
+        for y in y_vals:
+            val = evaluate_function(x, y)
+            if val < best_val:
+                best_val = val
+                best_x, best_y = x, y
+    return best_x, best_y, best_val
+```
+
+
+# Current Program
+```python
+# EVOLVE-BLOCK-START
+"""Function minimization example for OpenEvolve"""
+import numpy as np
+
+def search_algorithm(iterations=1000, bounds=(-5, 5)):
+    """
+    A simple random search algorithm that often gets stuck in local minima.
+    """
+    # Initialize with a random point
+    best_x = np.random.uniform(bounds[0], bounds[1])
+    best_y = np.random.uniform(bounds[0], bounds[1])
+    best_value = evaluate_function(best_x, best_y)
+
+    for _ in range(iterations):
+        # Simple random search
+        x = np.random.uniform(bounds[0], bounds[1])
+        y = np.random.uniform(bounds[0], bounds[1])
+        value = evaluate_function(x, y)
+
+        if value < best_value:
+            best_value = value
+            best_x, best_y = x, y
+
+    return best_x, best_y, best_value
+
+# EVOLVE-BLOCK-END
+```
+```markdown
+# Task
+Rewrite the program to improve its performance on the specified metrics.
+Provide the complete new program code.
+
+IMPORTANT: Make sure your rewritten program maintains the same inputs and outputs
+as the original program, but with improved internal implementation.
+
+```python
+# Your rewritten program here
+```
+```
+
+ 
+
+## Lab: General Function M**inimization**
+
+Please create a new folder in `examples` and implement a **“blind_minimization”**  approach which
+can operate like `examples/function_minimization` , and accept any user defined target function (without prior knowledge of the global minimum)
+
+```python
+# Current evaluation functions in examples/function_minimization
+def evaluate(program_path):
+
+		# The known Global Minimum parameters
+		GLOBAL_MIN_X = -1.704
+		GLOBAL_MIN_Y = 0.678
+		GLOBAL_MIN_VALUE = -1.519
+		
+		return EvaluationResult(
+		    metrics={
+				    # ...
+		        "combined_score": combined_score, # PRIMARY METRIC for evolution (required)
+		        $ ...
+		    }
+		)
+
+```
+
+- Tip: Utilize a dynamic baseline (relative competition within the population).
+```python
+# The current historical best value of the population (passed in by the OpenEvolve system or stored in a file)
+CURRENT_BEST = {"value": None}
+
+def evaluate(program_path):
+    x, y, value = run_with_timeout(program.run_search, timeout_seconds=5)
+    
+    # First run: no baseline exists, so accept it directly
+    if CURRENT_BEST["value"] is None:
+        CURRENT_BEST["value"] = value
+        return EvaluationResult(metrics={"combined_score": 0.5})
+    
+    # Compared with the historical best; the "margin of improvement" determines the score
+    improvement = CURRENT_BEST["value"] - value  # Positive value = improved
+    score = 0.5 + np.tanh(improvement * 5)       # Squashed into a 0 to 1 range
+
+    # If the historical best is broken, update the baseline
+    if value < CURRENT_BEST["value"]:
+        CURRENT_BEST["value"] = value
+    
+    return EvaluationResult(metrics={"combined_score": score})
+
+```
+
+### **Quick Start Recap**
+
+**Configuration (`config.yaml`)**
+
+Essential configuration structure:
+
+```yaml
+# Evolution settings
+max_iterations: 100
+checkpoint_interval: 10
+parallel_evaluations: 1
+
+# LLM configuration
+llm:
+  api_base: "https://api.openai.com/v1"  # Or your LLM provider
+  models:
+    - name: "gpt-4"
+      weight: 1.0
+  temperature: 0.7
+  max_tokens: 4000
+  timeout: 120
+
+# Database configuration (MAP-Elites algorithm)
+database:
+  population_size: 50
+  num_islands: 3
+  migration_interval: 10
+  feature_dimensions:  # MUST be a list, not an integer
+    - "score"
+    - "complexity"
+
+# Evaluation settings
+evaluator:
+  timeout: 60
+  max_retries: 3
+
+# Prompt configuration
+prompt:
+  system_message: |
+    You are an expert programmer. Your goal is to improve the code
+    in the EVOLVE-BLOCK to achieve better performance on the task.
+
+    Focus on algorithmic improvements and code optimization.
+  num_top_programs: 3
+  num_diverse_programs: 2
+
+# Logging
+log_level: "INFO"
+```
+
+**Critical Requirements:**
+
+- ✅ **`feature_dimensions` must be a list** (e.g., `["score", "complexity"]`), not an integer
+- ✅ Set appropriate timeouts for your use case
+- ✅ Configure LLM settings for your provider
+- ✅ Use meaningful `system_message` to guide evolution
+
+- Please submit a zip file which contains
+    - evaluator.py
+    - initial_program.py
+    - target_function.py (or how your example load the target function)
+    - Link: https://drive.google.com/drive/folders/1lmfVFm6w8ABq9kIkcIsz5TxZddyOMOrd?usp=sharing
+    - Deadline: 24:00, 5/20
+
+## Step 3. Setup the Evolutionary “World”
+
+In OpenEvolve the **Island-based Evolution model** is combined with the **MAP-Elites algorithm** to maintain code diversity throughout the evolutionary process and prevent the population from prematurely converging on local optima.
+
+- Islands are completely independent in terms of their genetics and evolutionary characteristics.
+
+### 1. Island Data Structure (Program Database) Initialization
+
+- Determining number of Island in `config.yaml`
+
+```python
+database:
+  population_size: 50
+  archive_size: 20
+  num_islands: 3          # <--- Defines that 3 islands should be opened
+```
+
+In the `ProgramDatabase` class within `openevolve/database.py`, the system creates multiple independent "islands" based on the configuration file (`config.num_islands`). 
+
+```python
+# The population of each island (a Set storing Program IDs)
+self.islands: List[Set[str]] = [set() for _ in range(config.num_islands)]
+```
+
+### 2. Strict Genetic Isolation
+
+Descendants remain on the same island as their parent to ensure absolute independence between islands. When a new piece of code is added to the database, it automatically inherits the island ID of its parent:
+
+```python
+# openevolve/database.py (ProgramDatabase.add)
+
+# If the program has a parent, inherit the parent's island to maintain island isolation
+if target_island is None and program.parent_id:
+    parent = self.programs.get(program.parent_id)
+    if parent and "island" in parent.metadata:
+        island_idx = parent.metadata["island"]
+```
+
+When a meta prompt requires reference code ("inspirations") to perform evolutionary mutations, e.g., 
+
+```python
+# Template for formatting inspirations section
+INSPIRATIONS_SECTION_TEMPLATE = """## Inspiration Programs
+
+These programs represent diverse approaches and creative solutions that may inspire new ideas:
+
+{inspiration_programs}
+"""
+```
+
+**the system only sample them within the same island:**
+
+```python
+# openevolve/database.py (ProgramDatabase._sample_inspirations)
+
+# Get the island where the parent resides
+parent_island = parent.metadata.get("island", self.current_island)
+
+# Only retrieve code from this specific island to use as reference context for mutation
+island_program_ids = list(self.islands[parent_island])
+island_programs = [self.programs[pid] for pid in island_program_ids if pid in self.programs]
+```
+
+### **MAP-Elites feature map**
+
+E**ach island maintains its own independent MAP-Elites feature map**. This means that the exact same ecological niche can be occupied by entirely different code variants across different islands
+
+```python
+# Each island has its own independent MAP-Elites feature map
+self.island_feature_maps: List[Dict[str, str]] = [{} for _ in range(config.num_islands)]
+```
+
+#### **MAP-Elites Algorithm**
+- **💡 Why is this mechanism powerful?**
+    - If we relied solely on `combined_score` (overall fitness) to determine survival, the evolution would quickly get trapped in a "Local Minimum," where all generated code looks exactly the same.
+    - However, with MAP-Elites, **even if a program has a terrible overall score, as long as its implementation is weird, overly complex, or extremely simple enough to land in an unoccupied edge cell, it survives!**
+    - These "weird" code snippets often act as crucial stepping stones (Inspirations) that trigger the LLM to invent groundbreaking, out-of-the-box algorithms in later generations.
+

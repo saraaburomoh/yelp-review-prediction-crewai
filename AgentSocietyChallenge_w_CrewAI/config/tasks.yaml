@@ -1,0 +1,82 @@
+# === Phase 1: Tasks Integrated from FirstCrew ===
+
+analyze_user_task:
+  description: >
+    Analyze the Yelp Active User Subset record for user {user_id}. 
+    1. Retrieve their profile using the Interaction Tool (query_type: "user").
+    2. ONLY IF step 1 returns data, understand their writing style and rating habits from their reviews (query_type: "review_by_user").
+    
+    CRITICAL: If the first query ('user') returns 'No data found', you MUST immediately stop using tools.
+    DO NOT query 'review_by_user'. DO NOT retry. Immediately provide your Final Answer stating that the user profile is unknown.
+  expected_output: >
+    A detailed markdown profile of user {user_id}'s preferences, rating habits, 
+    and social influence. If unknown, state clearly it is unknown.
+  agent: user_analyst
+
+analyze_item_task:
+  description: >
+    Analyze the Entity Item Subset record for business {item_id}.
+    1. Retrieve business details using:
+       Action: Interaction Tool Wrapper
+       Action Input: {{"query_type": "item", "target_id": "{item_id}"}}
+    2. ONLY IF step 1 returns data, understand customer sentiment using:
+       Action: Interaction Tool Wrapper
+       Action Input: {{"query_type": "review_by_item", "target_id": "{item_id}"}}
+    
+    CRITICAL: If the first query ('item') returns 'No data found', you MUST immediately stop using tools. 
+    DO NOT query 'review_by_item'. DO NOT retry. Immediately provide your Final Answer stating that the business profile is unknown.
+  expected_output: >
+    A detailed markdown report of business {item_id}'s features, pros, and cons, 
+    aligned with the official data schema. If unknown, state clearly it is unknown.
+  agent: item_analyst
+
+web_research_task:
+  description: >
+    Search the internet for news, status, or context about the business.
+    First, try to use the business name from the previous analysis. 
+    If the business name is UNKNOWN, you MUST use the search tool to search for the raw ID: {item_id}.
+    
+    Try this specific search query:
+    "Yelp {item_id}"
+    If any of these searches reveal the actual business name, use that name to find more context.
+  expected_output: >
+    A brief summary (3-5 sentences) of external findings about the business. If nothing specific is found, simply state that the business has no notable recent news.
+  agent: web_researcher
+
+predict_review_task:
+  description: >
+    Predict the star rating and write a simulated review text for user {user_id} for business {item_id}.
+    Tone: Match the vocabulary and writing style found in the user's review history.
+    Business: Refer to it by its actual name if known, otherwise describe it naturally.
+
+    ABSOLUTE RULES — violating any of these is a critical failure:
+
+    RULE 1 — ALWAYS WRITE A REAL REVIEW. You MUST output a review text that sounds like a genuine
+    Yelp review written by a real person who visited this business. This is non-negotiable.
+
+    RULE 2 — NEVER mention missing data, database errors, or that you cannot find information.
+    NEVER write phrases like "I'm not able to provide", "no information available",
+    "does not exist in the database", "I couldn't find", or "not based on actual data".
+    Any such phrase is an automatic failure.
+
+    RULE 3 — If user data is missing, assume a typical Yelp reviewer with average tastes.
+    If business data is missing, use ANY context from the web research agent, or assume
+    it is a typical local restaurant and write a plausible visit-based review.
+
+    RULE 4 — For the star rating: use the user's average_stars if known. 
+    If unknown, invent a realistic star rating (between 3.0 and 4.0) that matches the tone of your simulated review.
+    Adjust slightly based on any business signals from web research (positive news = +0.5, closure news = -1).
+
+    RULE 5 — The review must:
+    - Be at least 2 full sentences.
+    - Mention at least one specific detail (food item, service style, ambiance, price, wait time).
+    - Sound conversational and personal, as if the user actually visited.
+
+    Your response must be ONLY a valid JSON object in this exact format:
+    {{"stars": 4.0, "review": "The review text..."}}
+    Do NOT include any text before or after the JSON block.
+  expected_output: >
+    ONLY a valid JSON object: {{"stars": X.X, "review": "..."}}.
+    The review must be a genuine-sounding Yelp review (at least 2 sentences, mentions a specific detail).
+    NEVER say data is missing. No markdown blocks, no extra text.
+  agent: prediction_modeler

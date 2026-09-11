@@ -1,0 +1,142 @@
+# === Phase 1: Tasks Integrated from FirstCrew ===
+
+analyze_user_task:
+  description: >
+    Analyze the Yelp Active User Subset record for user {user_id}. 
+    1. Retrieve their profile using the Interaction Tool (query_type: "user").
+    2. Even if step 1 returns 'No data found', you MUST still retrieve and understand their writing style and rating habits from their reviews (query_type: "review_by_user").
+    
+    CRITICAL: You MUST check 'review_by_user' before concluding. If BOTH queries return no data, only then should you provide your Final Answer stating the profile is unknown.
+  expected_output: >
+    A detailed markdown profile of user {user_id}'s preferences, rating habits, 
+    and social influence. If unknown, state clearly it is unknown.
+  agent: user_analyst
+
+analyze_item_task:
+  description: >
+    Analyze the Entity Item Subset record for business {item_id}.
+    1. Retrieve business details using:
+       Action: Interaction Tool Wrapper
+       Action Input: {{"query_type": "item", "target_id": "{item_id}"}}
+    2. Even if step 1 returns 'No data found', you MUST still retrieve and understand customer sentiment using:
+       Action: Interaction Tool Wrapper
+       Action Input: {{"query_type": "review_by_item", "target_id": "{item_id}"}}
+    
+    CRITICAL: You MUST check 'review_by_item' before concluding. If BOTH queries return no data, only then should you provide your Final Answer stating the business profile is unknown.
+  expected_output: >
+    A detailed markdown report of business {item_id}'s features, pros, and cons, 
+    aligned with the official data schema. If unknown, state clearly it is unknown.
+  agent: item_analyst
+
+# EVOLVE-BLOCK-START
+classify_persona_task:
+  description: >
+    Review the outputs from the user analyst, item analyst, and web researcher.
+
+    ARCHETYPE DISCOVERY — You MUST refer to the ARCHETYPE TAXONOMY defined in your backstory.
+    OpenEvolve will actively mutate your backstory to invent better archetypes.
+    Always read your backstory taxonomy to determine the classifications — do not
+    assume fixed meanings from archetype names alone.
+
+    You MUST output:
+    1. The archetype NAME (use the default or invent a better one)
+    2. A 1-sentence DEFINITION of what this archetype means for star prediction
+    3. A confidence score (0.0-1.0)
+    4. The Review DNA block:
+       - rating_bias: how this user's average_stars compares to Yelp avg (3.5)
+       - complaint_triggers: 1-2 specific things that historically lower their ratings
+       - writing_style: tone/length/vocabulary signature from past reviews
+       - negative_review_risk: LOW / MEDIUM / HIGH that THIS business triggers
+         a below-average rating, with a 1-sentence reason
+
+    ADDITIONALLY — always output an Item Archetype block based on your ITEM TAXONOMY:
+    5. item_archetype: classify the BUSINESS using the Item Taxonomy in your backstory.
+    6. item_sentiment_split: count of positive reviews (4-5) vs negative reviews (1-3)
+    7. item_quality_verdict: assign a verdict based on the ITEM QUALITY VERDICT THRESHOLDS in your backstory.
+  expected_output: >
+    A structured report with:
+    - archetype_name: (the name, evolved or default)
+    - archetype_definition: (1-sentence behavioral definition)
+    - confidence: (0.0-1.0)
+    - Review DNA: rating_bias, complaint_triggers, writing_style, negative_review_risk
+    - item_archetype: (CONSISTENT_FAVORITE / POLARIZING_VENUE / DECLINING_QUALITY / NICHE_SPECIALIST / AVERAGE_PERFORMER)
+    - item_sentiment_split: (e.g. "7 positive, 3 negative")
+    - item_quality_verdict: (EXCELLENT / GOOD / MIXED / POOR)
+  agent: persona_classifier
+
+
+predict_review_task:
+  description: >
+    Predict the star rating and write a simulated review text for user {user_id} for business {item_id}.
+    Use the archetype_name, archetype_definition, confidence score, and Review DNA
+    (rating_bias, complaint_triggers, writing_style, negative_review_risk) from
+    the classification step to calibrate.
+
+    IMPORTANT: The archetype name may have been redefined by OpenEvolve. Always read
+    the archetype_definition to understand the behavioral logic — do NOT assume
+    fixed meanings from the name alone.
+
+    CALIBRATION RULES:
+    CASE A — All Review DNA fields are "Unknown" (user completely missing from database):
+      This means ONLY item evidence is available. Use the item_archetype and item_quality_verdict
+      from the classification step to calibrate your prediction:
+      - item_quality_verdict = EXCELLENT → predict 4.5 to 5.0
+      - item_quality_verdict = GOOD → predict 4.0 to 4.5
+      - item_quality_verdict = MIXED → predict 3.0 to 4.0 (use item_sentiment_split to fine-tune)
+      - item_quality_verdict = POOR → predict 1.5 to 3.0
+      - If item_archetype = POLARIZING_VENUE, pull your prediction toward the middle of the range.
+      - DO NOT default to 3.5 when rich item evidence exists. DO NOT cap at 4.0 for excellent restaurants.
+
+    CASE B — confidence is LOW but some DNA signals exist:
+      Weight the known DNA signals over the business's average rating.
+
+    CASE C — confidence is HIGH and risk is LOW:
+      Lean toward the business's average rating and the user's average_stars.
+
+    ABSOLUTE RULES — violating any of these is a critical failure:
+
+    RULE 1 — ALWAYS WRITE A REAL REVIEW. You MUST output a review text that sounds like a genuine
+    Yelp review written by a real person who visited this business. This is non-negotiable.
+
+    RULE 2 — NEVER mention missing data, database errors, or that you cannot find information.
+    NEVER write phrases like "I'm not able to provide", "no information available",
+    "does not exist in the database", "I couldn't find", or "not based on actual data".
+    Any such phrase is an automatic failure.
+
+    RULE 3 — If user data is missing, assume a typical Yelp reviewer with average tastes.
+    If business data is missing, use ANY context from the web research agent, or assume
+    it is a typical local restaurant and write a plausible visit-based review.
+
+    RULE 4 — For the star rating: calibrate using Review DNA first. Use the user's average_stars
+    and rating_bias as the anchor. Adjust for negative_review_risk level.
+    Do NOT blindly predict the restaurant's average rating.
+    Round to one decimal. Keep within 1.0 to 5.0.
+
+    RULE 5 — The review must:
+    - Be at least 2 full sentences.
+    - Mention at least one specific detail (food item, service style, ambiance, price, wait time).
+    - Sound conversational and personal, as if the user actually visited.
+    - Match the writing_style documented in the Review DNA.
+
+    Your response must be ONLY a valid JSON object in this exact format:
+    {{"stars": 4.0, "review": "The review text..."}}
+    Do NOT include any text before or after the JSON block.
+  expected_output: >
+    ONLY a valid JSON object: {{"stars": X.X, "review": "..."}}.
+    The review must be a genuine-sounding Yelp review (at least 2 sentences, mentions a specific detail).
+    NEVER say data is missing. No markdown blocks, no extra text.
+  agent: prediction_modeler
+# EVOLVE-BLOCK-END
+
+web_research_task:
+  description: >
+    Search the internet for news, status, or context about the business.
+    First, try to use the business name from the previous analysis. 
+    If the business name is UNKNOWN, you MUST use the search tool to search for the raw ID: {item_id}.
+    
+    Try this specific search query:
+    "Yelp {item_id}"
+    If any of these searches reveal the actual business name, use that name to find more context.
+  expected_output: >
+    A brief summary (3-5 sentences) of external findings about the business. If nothing specific is found, simply state that the business has no notable recent news.
+  agent: web_researcher

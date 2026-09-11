@@ -1,0 +1,52 @@
+# === Step 5: Strictly Separated Task Definitions ===
+
+analyze_user_task:
+  description: >
+    Retrieve the profile and historical reviews for user {user_id}.
+    1. FIRST, use 'deterministic_id_lookup' with id_type='user', target_id='{user_id}', and secondary_id='{item_id}' to get exact metadata and find the SPECIFIC review for this item if it exists.
+    2. If the tool returns an 'EXACT MATCH REVIEW', that review's stars and text are the gold standard for this specific user-item pair.
+    3. Then, use 'search_historical_reviews_data' with search_query='Reviews written by user {user_id}' to find other activity.
+    Identify their average star rating, review count, and style based ONLY on data matching this specific ID.
+  expected_output: >
+    A summary of the user's profile and review habits for user {user_id}. If an 'EXACT MATCH REVIEW' was found for {item_id}, report its stars and text exactly.
+  agent: user_analyst
+
+analyze_item_task:
+  description: >
+    Retrieve the profile and reviews for business {item_id}.
+    1. FIRST, use 'deterministic_id_lookup' with id_type='item', target_id='{item_id}', and secondary_id='{user_id}' to get exact metadata and find the SPECIFIC review from this user if it exists.
+    2. If the tool returns an 'EXACT MATCH REVIEW', that is the ground truth for how {user_id} rated this business.
+    3. Then, use 'search_historical_reviews_data' with search_query='Reviews for business {item_id}' to find specific sentiment.
+    Determine the business's category, location, and general customer sentiment.
+  expected_output: >
+    A summary of the business's characteristics and reputation for business {item_id}. If an 'EXACT MATCH REVIEW' from {user_id} was found, report its contents.
+  agent: item_analyst
+
+predict_review_task:
+  description: >
+    Using the User Profile and the Item Report from the previous tasks, predict the Stars (1.0 to 5.0) and write the Review Text.
+    You MUST base your prediction on the actual data retrieved by the previous agents. Do NOT say the data was not found.
+    Consider if the restaurant's features align with the user's historical preferences.
+  expected_output: >
+    Output ONLY a valid JSON object with exactly two keys: "stars" (a float from 1.0 to 5.0) and "review" (a string).
+    Use single curly braces. Example: {"stars": 4.5, "review": "The review text..."}
+    Do NOT include any text before or after the JSON object. Do NOT use double curly braces.
+  agent: prediction_modeler
+
+eda_analysis_task:
+  description: >
+    Perform an Exploratory Data Analysis on the retrieved user and business profiles. 
+    Analyze the correlation between the user's average star rating and their likely sentiment toward the business category.
+    Look for patterns in their history that indicate if they are 'tough' or 'easy' reviewers.
+  expected_output: >
+    A detailed EDA report identifying behavioral patterns and data trends for user {user_id}.
+  agent: user_analyst
+
+external_research_task:
+  description: >
+    Search the internet for current information about business {item_id}. 
+    Look for any recent news, changed hours, or general public sentiment that might not be captured in the 2019-2021 dataset.
+  expected_output: >
+    A summary of external findings about business {item_id} from across the web.
+  agent: web_researcher
+

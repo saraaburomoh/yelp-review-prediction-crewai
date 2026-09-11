@@ -1,0 +1,56 @@
+# LLM & APP (w16 2026 Spring)
+
+**Tuesday 10:10-13:00, E307 Engineering II**
+
+**Instructor: Yu-Chieh Jack Ho**
+
+**Office:** A302, Engineering II  | **Office hours:** Weds 10:30-12:30 | **Email:** yc.ho@gms.ndhu.edu.tw
+
+
+# Agenda:
+
+- **Final Project Discussion**
+- **Seminar: World Models Paper Wrap Up**
+- **Lecture: Preference Fine-Tuning**
+- **LAB: Preference Fine-Tuning with DPO (Direct Preference Optimization) and QLoRA**
+- **Final Project Spirint**
+
+# **Final Project Recap and Discussion**
+
+## **📊 Grading (30% of Course Grade)**
+
+- The grading will be based on:
+    - The **Novelty** about **what** and **how** you leverage ****OpenEvolve to optimize your agent crew.
+        - Be creative!
+    - The **depth of evolution analysis**
+        - Parse and explain the evolution path, discuss interesting strategies OpenEvolve discovered.
+    - **Performance**
+        - Evolve 50 iterations on 1 task and report the final combined score in the report.
+
+## **Technical Report &** Presentation
+
+- Format:
+    - Google Slides, Markdown (can be the README of your repo), or Both. Just make sure you can share your findings properly.
+- Content:
+    - **Novelty finding first**:
+        - Crew **Diagram**: Members and their Collaboration Pattern
+        - Agents Design: Role, Goal, Backstory, **TOOL USE**
+        - Tasks: Description, Expected_output
+        - Etc…
+    - **Evolution Analysis**:
+        - Use the **visualizer** to compare the differences between Gen-0 and evolved results
+        - Analyze  the checkpoints data to parse and explain the evolution ****paths.
+- Please attach your GitHub link to your report and push your report to your GitHub, then upload your report to  https://drive.google.com/drive/folders/1S_m8D_uugqc64czOPOeTGRMlS3bjOiA4?usp=sharing
+
+## Presentation Date
+- **6/23**
+- **6/16**
+
+## Future Plan: Co-Evolving Agents and Tasks
+
+Yes, you absolutely can!
+
+In OpenEvolve, you can co-evolve both agents and tasks simultaneously. You simply wrap the specific agents you want to evolve in config/agents_evolving.yaml with the # EVOLVE-BLOCK-START and # EVOLVE-BLOCK-END tags, and do the exact same thing for the specific tasks you want to evolve in config/tasks_evolving.yaml.
+
+During the evolution loop, the framework will mutate both the agent personas (roles/backstories) and the task instructions together to find the best combined strategy.
+

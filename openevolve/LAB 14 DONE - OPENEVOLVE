@@ -1,0 +1,582 @@
+# LLM & APP (w14 2026 Spring)
+
+**Tuesday 10:10-13:00, E307 Engineering II**
+
+**Instructor: Yu-Chieh Jack Ho**
+
+**Office:** A302, Engineering II  | **Office hours:** Weds 10:30-12:30 | **Email:** yc.ho@gms.ndhu.edu.tw
+
+# Recap:
+
+### **Dynamic** Meta prompting
+
+- During code e**volution**, OpenEvolve d**ynamically** apply meta prompting in every iterations (generations)
+
+![image.png](attachment:38d2e37f-7a9e-4870-90fe-84869f84e05a:image.png)
+
+### Lab: General Function M**inimization**
+
+A  Function M**inimizer** which accept any user defined target function 
+
+![image.png](attachment:afbf1ba3-8809-46a2-8afb-69886c075a26:image.png)
+
+- Tip: Utilize a dynamic baseline (relative competition within the population) in evaluator.
+    - Evaluator is the key to boost evaluation
+
+```python
+# The current historical best value of the population (passed in by the OpenEvolve system or stored in a file)
+CURRENT_BEST = {"value": None}
+
+def evaluate(program_path):
+    x, y, value = run_with_timeout(program.run_search, timeout_seconds=5)
+    
+    # First run: no baseline exists, so accept it directly
+    if CURRENT_BEST["value"] is None:
+        CURRENT_BEST["value"] = value
+        return EvaluationResult(metrics={"combined_score": 0.5})
+    
+    # Compared with the historical best; the "margin of improvement" determines the score
+    improvement = CURRENT_BEST["value"] - value  # Positive value = improved
+    score = 0.5 + np.tanh(improvement * 5)       # Squashed into a 0 to 1 range
+
+    # If the historical best is broken, update the baseline
+    if value < CURRENT_BEST["value"]:
+        CURRENT_BEST["value"] = value
+    
+    return EvaluationResult(metrics={"combined_score": score})
+
+```
+
+### OpenEvolve’s Evolutionary Algorithm
+
+A Combination of the **Island-based Evolution model**  and the **MAP-Elites algorithm**
+
+- **“Islands”:** A mechanism that isolate “DNAs” and force them to evolve independently
+    - In the `ProgramDatabase` class within `openevolve/database.py`, the system creates multiple independent "islands" based on the configuration file (`config.num_islands`).
+        
+        ```python
+        # The population of each island (a Set storing Program IDs)
+        self.islands: List[Set[str]] = [set() for _ in range(config.num_islands)]
+        ```
+        
+    
+    ![image.png](attachment:ce8bc88b-852e-4e8d-a0d7-8d970b9c8e1a:image.png)
+    
+- **MAP-Elites:** A ****structure and approach to efficiently maintain the diversity of “population” on each island by **Keep  “weird codes”, e.g., overly complex, or extremely simple for more inspiration.**
+    
+    ```python
+    # Each island has its own independent MAP-Elites feature map
+    self.island_feature_maps: List[Dict[str, str]] = [{} for _ in range(config.num_islands)]
+    ```
+    
+    - E**ach island maintains its own independent MAP-Elites feature map**. This means that the exact same feature dimention can be occupied by entirely different code variants across different islands
+
+# Agenda:
+
+- Recap
+- Seminar
+- Lecture
+    - FunSearch - ****Problem Formulation of AlphaEvolve
+    - Primary Breakthrough: Heuristic Algorithm Discovery
+    - Leverage AlphaEvolve to Solve a Meaningful and Complex Problem
+        - What’s a Meaningful Problem and Why AgentSociety Challenge
+- Lab: Integration or New Problem Formulation
+
+# FunSearch - ****Problem Formulation of AlphaEvolve
+
+**FunSearch** ("searching in the function space"): Discover computer programs that solve complex mathematical and algorithmic problems by searching over a space of program fragments, usually computer [functions](https://en.wikipedia.org/wiki/Function_(computer_programming)) embedded in a fixed program skeleton (e.g., Evolve Block.)
+
+Its core mechanism combines: 
+
+- A **Large Language Model (LLM)**,
+- An **automated evaluator**,
+- An **evolutionary search procedure (algorithm)**.
+
+### **1. Definition**
+
+- $\mathcal{F} =\{f_0,...,f_n\}$： Space of all candidate functions.
+    - $f_0$ : the initial function
+- $S: \mathcal{F} \to \mathbb{R}$：  Evaluator function that measure a candidate functions by mapping them to real numbers.
+    - e.g., $S(f_{0})=0.345$
+- $D$ ：Program database that store valid functions and their evaluation score.
+    - $D =\{(f_{0}, S(f_{0})),...,(f_{m}, S(f_{m}))\}$
+
+### 2. Objective Function
+
+- $f^{*} = \operatorname{arg\,max}_{f \in \mathcal{F}} S(f)$
+    - Find the optimal candidate function $f^{*}$ *in the function space that maximizes the evaluator score:*
+
+### 3. Pseudocode
+
+**Input:**
+• $f_0$ : Initial function (e.g., `initial_program.py`)
+• $S: \mathcal{F} \to \mathbb{R}$: Evaluator function (`evaluator.py`)
+• $\operatorname{LLM}$ : Pre-trained Large Language Model. (set up in `config.yaml`)
+• $\text{max\_iter}$ : Maximum number of iterations. (set up in `config.yaml`) 
+**Output:**
+• $f_{\text{best}}$ : The candidate function with the highest evaluator score. (in `./openevolve_output`)
+
+**1. Initialization** (`openevolve/database.py`)
+• Initialize the database: $D \leftarrow \{(f_0, S(f_0))\}$
+• Track the best function: $f_{\text{best}} \leftarrow f_0$
+- Track the maximum score: $\text{max\_score}\leftarrow S(f_0)$
+
+**2. Evolutionary Search Loop** (`openevolve/prompt/sampler.py` & `openevolve/database.py`)
+• **For**  $\text{iter} = 1$  **to**  $\text{max\_iter}$ **do:**
+    ◦ **Step A: Sample Functions 
+          Sample diverse, high-scoring functions from $D$**
+        ▪ e.g., $F_{\text{sample}} \leftarrow \operatorname{Sample}(D, k, \text{bias}=\text{"high\_score"})$
+
+              Let $F_{\text{sample}}$ = $\{f_1,f_2,\ldots,f_k\}$.
+       **Step B: Construct Prompt**   
+        ◦ $\text{prompt} \leftarrow \operatorname{ConstructPrompt}(F_{\text{sample}})$
+    ◦ **Step C: Generate New Candidate**
+        ▪ $f' \sim \operatorname{LLM.Generate}(\text{prompt})$
+    ◦ **Step D: Evaluate and Validate**
+        ▪ **If** $\operatorname{IsValid}(f')$ **Then**
+            • Calculate the score: $\text{score}' \leftarrow S(f')$
+    • **Step E: Update Database**
+             $D \leftarrow D \cup \{(f', \text{score}')\}$
+    • **Step F: Track Best Result**
+
+          **If** $\text{score}' > \text{max\_score}$ **Then**
+                ◦ $f_{\text{best}} \leftarrow f'$
+                ◦ $\text{max\_score} \leftarrow \text{score}'$
+• **End For**
+**3. Return Result**
+• **Return** $f_{\text{best}}$
+
+### Note:
+
+The previously mentioned island-based model and MAP-Elites algorithm are applied during **Initialization, Function Sampling,** and **Prompt Construction.**  
+
+- **Reference week 13 hangouts and following** DataFlow **for details**
+
+### OpenEvolve DataFlow
+
+# Primary Breakthrough: Heuristic Algorithm Discovery
+
+## What is a Heuristic in AI?
+
+A **heuristic** is a practical shortcut or "rule of thumb" used when facing a very complex problem, for which finding a perfect solution is computationally impossible. It trades absolute perfection for speed, guiding the AI toward a **"good enough"** solution.
+
+## **Example: The Challenge of TSP**
+
+The **Traveling Salesperson Problem (TSP)** is a classic **NP-Hard** problem where an agent must find the shortest route visiting $N$ cities exactly once.
+
+- Because possible routes scale factorially—calculated as $\frac{(N-1)!}{2}$—it triggers a **combinatorial explosion**.  For 100 cities, the possibilities outnumber the atoms in the universe, making heuristics absolutely mandatory for practical logistics.
+- *Nearest Neighbor* approach
+    
+    ![Nearestneighbor.gif](attachment:db85cab2-da4f-4308-b02f-3dea2f1aa9b9:Nearestneighbor.gif)
+    
+- One of the best heuristics: https://en.wikipedia.org/wiki/Lin%E2%80%93Kernighan_heuristic
+
+#### Real-World Applications
+
+Any industry problem involving the **"optimal sequencing of limited resources"** can be modeled as a variant of the TSP, e.g.:
+
+- **Logistics & Warehousing:** Routing delivery vehicles or automated warehouse-picking robots to minimize travel time.
+    
+    ![image.png](attachment:8921b9ee-407b-45d7-987e-493784e3e2cf:image.png)
+    
+- **Microchip Manufacturing:** Optimizing the path of a robotic drill punching thousands of microscopic holes in circuit boards to save production time.
+- **Astronomy:** Minimizing the mechanical movement time of telescopes when scheduling observations of multiple celestial bodies to reduce operation time, as well as ordinary wear and tear.
+
+## How FunSearch Discovers Superior Heuristics
+
+- **Bypasses Human Cognitive Bias:** By running millions of automatic iterations, it discovers unorthodox strategies that human would never think to try.
+- **Human-Readable Output:** FunSearch outputs actual **codes**. Humans can read, understand, and learn the underlying mathematical logic.
+- Best Practice:
+    - Start with Human Intelligence, evolve with Artificial Intelligence, complete with human understanding.
+
+![image.png](attachment:e40fc65a-eb6f-4d71-9c61-ca4097142d13:image.png)
+
+# Leverage AlphaEvolve to Solve a Meaningful Complex Problem
+
+## AgentSociety Challenge
+
+- The core concept of **Agent-Based Simulation — simulating human behavior through LLM agent**s—requiring memory, reasoning, environment perception, and tool use—is driving several high-value AI frameworks:
+
+#### 1. Social & Population Dynamics
+
+- **Example:** Stanford's *Generative Agents (Smallville)*, where virtual agents with unique personas live, socialize, and share information in a sandbox town.
+- **Value:** It captures **emergent behaviors**. This helps researchers simulate real-world phenomena like how infectious diseases spread, how misinformation propagates on social networks, or how crowds move during urban planning.
+
+#### 2. Economic & Market Simulation
+
+- **Example:** Macroeconomic sandboxes where individual AI agents play the roles of consumers (with varying budgets and risk appetites) and businesses.
+- **Value:** It acts as a **risk-free policy testbed**. Governments and enterprises can simulate how a market will react to a new tax policy, stimulus package, or algorithmic pricing model before launching it in reality.
+
+#### 3. Web Navigation & Digital Action
+
+- **Example:** *WebArena* and *Mind2Web*, where agents are tasked with browsing real-world web environments to complete tasks like booking flights or buying specific products.
+- **Value:** It tests an agent's **multi-step reasoning and error recovery** (e.g., knowing to hit "back" if a page fails). This forms the foundation for next-generation digital assistants and advanced workflow automation (RPA 2.0).
+
+### Summary
+
+**Agent-Based Simulation** provides **low-cost, zero-risk sandboxes** for complex real-world scenarios. 
+
+### Current Progress
+
+Now we have
+
+- Baseline Agent Crew
+- Historical Review data
+- Clear Evaluation Metrics
+
+### Next: Integrate and Evolve
+
+- Sample Code:
+    - https://github.com/yuchieh/AgentSocietyChallenge_OpenEvolve
+- Agent Design improved within 10 iterations.:
+
+### Final Project Focus
+
+- Novelty
+    - What can be evolve besides agent design?
+    - What’s the best way to evolve them?
+- Analysis
+    - How do you parse the evolution path
+    - How do you explain the results
+- Accuracy
+    - The final evaluation result (combined score)
+
+## An alternative for the final project: Propose your problem
+
+- Discuss with me about its importance and challenge
+- Describe your problem clearly (e.g., the initial function)
+- Describe how would you evaluate it clearly (e.g., the evaluation function)
+
+# Lab: Bringing Your Agent Crew into the OpenEvolve Framework or Propose your Problem Formulation
+
+Follow the guide to integrate your baseline crew with the OpenEvolve framework and complete a smoke test (Step 3)
+
+OR
+
+Formulate your problem and discuss with me
+
+# Integration Guide
+
+> This guide walks you through migrating the Multi-Agent CrewAI system you designed in
+**`AgentSocietyChallenge_w_CrewAI`** (the teaching parent repo) into
+**`AgentSocietyChallenge_OpenEvolve`** (the version integrated with OpenEvolve), and
+then launching an LLM-driven evolutionary optimization of your agent prompts.
+> 
+
+---
+
+## 0. The Role of Each Repo
+
+| Repo | Role | What You Do |
+| --- | --- | --- |
+| [`AgentSocietyChallenge_w_CrewAI`](https://github.com/yuchieh/AgentSocietyChallenge_w_CrewAI) | **Design sandbox** | Design, iterate, and test your Multi-Agent Crew |
+| [`AgentSocietyChallenge_OpenEvolve`](https://github.com/yuchieh/AgentSocietyChallenge_OpenEvolve) | **Evolution framework** | Move your validated Crew here and let an LLM auto-evolve the best prompts |
+
+The two repos share **the exact same underlying code** (same `websocietysimulator/` competition framework, same CrewAI integration layer). The only difference is that the evolution version wraps everything with an OpenEvolve evaluator.
+
+## 1. The Three-Layer Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ OpenEvolve (outer layer — exists only in the evolution repo)│
+│   - LLM mutates the contents of agents.yaml                 │
+│   - Runs evaluator → collects fitness → decides next mutation│
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼ passes mutated YAML downward
+┌─────────────────────────────────────────────────────────────┐
+│ Your CrewAI System (middle layer — present in both repos)   │
+│   - config/agents.yaml      ← your Agent role definitions   │
+│   - config/tasks.yaml       ← your Task instructions        │
+│   - src/crews/...           ← your Crew assembly logic      │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼ queries data, returns prediction
+┌─────────────────────────────────────────────────────────────┐
+│ Competition Simulator (bottom — present in both, immutable) │
+│   - websocietysimulator/                                    │
+│   - InteractionTool: get_user / get_item / get_reviews      │
+│   - SimulationEvaluator: computes stars MAE + review sim    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Anything that runs in the parent repo will run in the evolution version too. The only addition is "a layer that can evolve your prompts on top".
+
+---
+
+## 2. File Correspondence Between the Two Repos (Most Important!)
+
+Parent Repo (design)	Evolution Repo (execution)	Action
+config/agents.yaml	config/agents.yaml	✅ Copy in full
+config/tasks.yaml	config/tasks.yaml	✅ Copy in full
+src/crews/simulation_crew.py	src/crews/simulation_crew.py	✅ Copy in full
+src/tools/interaction_tool_wrapper.py	src/tools/interaction_tool_wrapper.py	⛔ Usually untouched
+src/flows/serving_flow.py	src/flows/serving_flow.py	⛔ Do NOT modify (OpenEvolve already added the agents_config_path mechanism)
+crewai_simulation_agent.py	crewai_simulation_agent.py	⛔ Do NOT modify (same reason as above)
+run_pipeline.py / run_test.py	run_test.py	⛔ Use the existing one
+❌ Does not exist	config/agents_evolving.yaml	🆕 Create new (from agents.yaml + EVOLVE-BLOCK markers)
+❌ Does not exist	config/openevolve_config.yaml	⛔ Defaults are usually fine
+❌ Does not exist	openevolve_evaluator.py	⛔ Do not touch
+
+Note: Some merges may be necessary if you customized the files in the Parent Repo, e.g,: 
+
+- `src/flows/serving_flow.pysrc/flows/serving_flow.py`
+- `crewai_simulation_agent.pycrewai_simulation_agent.py`
+- etc…
+
+### 2.1 Data Directory Structure (Identical in Both Repos)
+
+Both repos use the same data directory naming, so **bringing data over from the parent repo requires no path/filename changes**:
+
+```
+dummy_dataset/
+├── item.json                # items / businesses
+├── user.json                # users
+├── review.json              # historical reviews
+├── test_review_subset.json  # sampling source (input for create_sampled_dataset.py)
+└── lmdb_cache/              # LMDB index (auto-built on first run; safe to delete)
+
+dummy_tasks/                 # simulation tasks (task_1.json ~ task_N.json)
+dummy_groundtruth/           # corresponding groundtruth (groundtruth_*.json)
+```
+
+If you generated new data in the parent repo via create_sampled_dataset.py or data_process.py
+
+What you produced in the parent repo	Where it goes in the evolution repo
+dummy_tasks/task_*.json	Same-named dummy_tasks/ (just copy)
+dummy_groundtruth/groundtruth_*.json	Same-named dummy_groundtruth/ (just copy)
+dummy_dataset/{item,user,review}.json	Same-named dummy_dataset/ (just copy; remember to remove the old lmdb_cache/)
+
+> 💡 Paths are hard-coded in `openevolve_evaluator.py`, `run_test.py`, and `src/utils/create_sampled_dataset.py`, but **because the naming matches the parent repo, you don't need to edit those files**.
+> 
+
+---
+
+## 3. Complete Migration Workflow (5 Steps)
+
+### Assumptions
+
+- You have already designed a Multi-Agent Crew in the parent repo (e.g., `user_analyst` + `item_analyst` + `prediction_modeler`)
+- You have run `uv run python run_pipeline.py` in the parent repo and obtained reasonable metrics
+
+### Step 1: Clone the Evolution Repo and Initialize
+
+```bash
+cd ~/WorkSpace/your_workspace/
+git clone <https://github.com/yuchieh/AgentSocietyChallenge_OpenEvolve.git>
+cd AgentSocietyChallenge_OpenEvolve
+
+cp .env.example .env
+# Edit .env to fill in OPENAI_API_KEY and OPENAI_API_BASE (e.g., NVIDIA NIM)
+
+make install      # uv sync
+```
+
+### Step 2: Port Your Agent Design (3 Files)  
+
+**Assuming your parent repo lives at** `~/WorkSpace/your_workspace/AgentSocietyChallenge_w_CrewAI/`:
+
+```bash
+# Copy from parent repo into the same locations in the evolution repo
+cp ~/WorkSpace/your_workspace/AgentSocietyChallenge_w_CrewAI/config/agents.yaml             config/agents.yaml
+cp ~/WorkSpace/your_workspace/AgentSocietyChallenge_w_CrewAI/config/tasks.yaml              config/tasks.yaml
+cp ~/WorkSpace/your_workspace/AgentSocietyChallenge_w_CrewAI/src/crews/simulation_crew.py   src/crews/simulation_crew.py
+```
+
+### Step 3: Run a Smoke Test to Confirm the Port
+
+```bash
+make smoke
+```
+
+Expected output:
+
+```
+✅ Integration test complete!
+overall_quality: 0.7x ~ 0.8x  
+```
+> **If smoke test fails**, go back to the parent repo and verify it still works there, then re-check the file paths in Step 2. **Do not move forward until smoke passes.**
+> 
+
+### Step 4: Create `agents_evolving.yaml` — Mark Which Agents Should Evolve
+
+Make a copy of `agents.yaml`:
+
+```bash
+cp config/agents.yaml config/agents_evolving.yaml
+```
+
+Then edit `config/agents_evolving.yaml` and **use `EVOLVE-BLOCK` markers to wrap the section you want the LLM to mutate**.
+
+### Rules (Critical!)
+
+| Rule | Why |
+| --- | --- |
+| 🔴 **Exactly one block per file** | OpenEvolve does not accept multiple blocks (it technically runs but converges much slower) |
+| 🟢 **Agents WITH tools go OUTSIDE the block in the first run.** | Their prompts are tightly coupled to the ReAct format in `tasks.yaml`; if mutated, tool calls may break |
+| 🟢 **Pure reasoning agents go INSIDE the block** | These agents have no tools, just synthesize information into output — perfect targets for evolution |
+| 🟢 **Keep `llm:` field inside the block** | The LLM tends to preserve it naturally, but keeping it inside is safer |
+
+### Example: Parent Repo's 3-Agent Structure
+
+```yaml
+# config/agents_evolving.yaml
+
+# === Agents WITH tools stay OUTSIDE EVOLVE-BLOCK (protect tool-calling format) ===
+user_analyst:
+  role: >
+    Yelp User Profiler
+  goal: >
+    Analyze user {user_id}'s historical reviews and preferences
+  backstory: >
+    You are an expert behavior analyst...
+  llm: openai/minimaxai/minimax-m2.7
+
+item_analyst:
+  role: >
+    Yelp Restaurant Analyst
+  goal: >
+    Analyze business {item_id}'s characteristics and reputation
+  backstory: >
+    You are a restaurant critic...
+  llm: openai/minimaxai/minimax-m2.7
+
+# === Pure reasoning agents go INSIDE the EVOLVE-BLOCK ===
+# EVOLVE-BLOCK-START
+prediction_modeler:
+  role: >
+    Review Prediction Expert
+  goal: >
+    Predict the exact Star rating (1.0 to 5.0) and generate a mock review text...
+  backstory: >
+    You are a master of predicting human behavior...
+  llm: openai/minimaxai/minimax-m2.7
+# EVOLVE-BLOCK-END
+```
+
+### Step 5: Launch Evolution
+
+```bash
+# Default: 10 iter × 5 tasks
+make evolve
+
+# Custom parameters
+make evolve ITERS=10 TASKS=1
+
+# Resume from a checkpoint (if a previous run was interrupted)
+make evolve-resume CHECKPOINT=config/openevolve_output/checkpoints/checkpoint_10
+```
+
+While evolution runs, open another terminal for the visualizer:
+
+```bash
+make visualize
+# Open browser at <http://127.0.0.1:8080>
+```
+
+---
+
+## 4. Use the Best Evolved Result
+
+```bash
+# 1. Check the final best score
+cat config/openevolve_output/best/best_program_info.json
+
+# 2. Inspect the best evolved YAML
+cat config/openevolve_output/best/best_program.yaml
+
+# 3. Apply it to the production agents.yaml
+cp config/openevolve_output/best/best_program.yaml config/agents.yaml
+
+# 4. Run a full real-LLM test with the best version
+make test
+```
+
+> Note: the `EVOLVE-BLOCK` markers in `agents_evolving.yaml` will appear in
+`best_program.yaml` as YAML comments (`#`-prefixed). They are harmless — CrewAI
+ignores them — but you may delete them for cleanliness when copying to `agents.yaml`.
+>
+
+5. Troubleshooting
+
+Symptom	Likely Cause	Fix
+make smoke returns overall_quality: 0.27	LLM API failed, evaluator returned fallback	Verify .env API key / base URL; confirm make test-mock works (mock mode doesn't use tokens)
+Evaluator prints ⏱  Simulation exceeded 900s	A single simulation got stuck on LLM rate limits	Reduce TASKS=N, raise OPENEVOLVE_SIM_TIMEOUT=1800, or switch API
+Mutated YAML breaks → all evaluations fail	OpenEvolve uses diff mode by default, which corrupts YAML	Confirm config/openevolve_config.yaml has diff_based_evolution: false
+combined_score shows no improvement	EVOLVE-BLOCK is too small, search space is limited	Move more agents inside the block, or increase ITERS
+Tool calls fail entirely (agent never invokes tools)	A tool-using agent inside EVOLVE-BLOCK and the LLM ruined its role	Move tool-using agents OUTSIDE the block
+
+## 6. Quick Look: Evolution Loop Internals
+
+When you run `make evolve`, here is what happens behind the scenes:
+
+[Repeats for ITERS iterations]
+
+  1. OpenEvolve samples a parent YAML from the population
+                ▼
+  2. LLM reads the parent YAML (including your EVOLVE-BLOCK markers)
+     and produces a full-rewrite mutated YAML
+                ▼
+  3. The mutated YAML is written to /tmp/xxxxx.yaml
+                ▼
+  4. OpenEvolve calls openevolve_evaluator.py's evaluate(/tmp/xxxxx.yaml)
+                ▼
+  5. evaluate() sets env var OPENEVOLVE_AGENTS_YAML=/tmp/xxxxx.yaml
+                ▼
+  6. evaluate() calls simulator.run_simulation(N=TASKS)
+                ▼
+  7. Simulator spawns a CrewAISimulationAgent per task
+                ▼
+  8. CrewAISimulationAgent reads the env var → loads /tmp/xxxxx.yaml
+     → assembles SimulationCrew with the mutated agents config
+     → executes the 3 Tasks
+                ▼
+  9. Each task produces {stars, review}; Simulator computes metrics
+     by comparing against groundtruth
+                ▼
+ 10. evaluate() returns {"combined_score": overall_quality}
+                ▼
+ 11. OpenEvolve writes this fitness into the MAP-Elites database
+                ▼
+ 12. In the next iteration, high-fitness YAMLs are more likely
+     to be sampled as parents
+
+7. Additional Resources
+
+| To learn about | See |
+| --- | --- |
+| How OpenEvolve works | https://github.com/algorithmicsuperintelligence/openevolve |
+| How to write EVOLVE-BLOCK markers | `examples/README.md` inside the OpenEvolve repo |
+| Detailed Simulator / InteractionTool API | `docs/legacy/tutorials/agent_development.md` |
+| Our specific OpenEvolve integration details | `CLAUDE.md` |
+
+## TL;DR — One-Page Cheat Sheet
+
+1. **Clone** `AgentSocietyChallenge_OpenEvolve`, then `cp .env.example .env` and fill in API keys
+2. **Copy 3 files** from parent repo into evolution repo: `agents.yaml`, `tasks.yaml`, `simulation_crew.py`
+3. **`make smoke`** to verify nothing broke
+4. **`cp agents.yaml agents_evolving.yaml`**, edit the copy to wrap pure-reasoning agents in **one** `EVOLVE-BLOCK`
+5. **`make evolve ITERS=50 TASKS=3`** to launch evolution
+6. After completion: **`cp config/openevolve_output/best/best_program.yaml config/agents.yaml`** to deploy the best version
+
+🎉 Enjoy automatic LLM-driven prompt optimization for your Multi-Agent system.
+
+Dear All:
+
+I believe that you've finished the Step1-Step3 in the Integration Guide yesterday,
+Please continue Steps 4 and 5, let the system evolve for 30 iterations on 1 task
+ (make evolve ITERS=30 TASKS=1), Then copy and upload the best result you saw in the
+ Visualizer to this folder.  Here is an example of 10 iterations.
+Deadline: Next Monday (6/1) at 24:00.
+
+Note: The evolution takes several hours, so it is recommended to start before sleep, and you will see the result the next morning. Besides, although the deadline is next Monday, I would recommend you try it tonight and buy some buffers. 
+
+Let me know if you have any questions.
+
+I RAN IT AND GOT THIS RESULT HERE -> C:\Users\MCC\Rag_Crew_Profiler\openevolve\AgentSocietyChallenge_OpenEvolve\config\openevolve_output
+
+i think i will optimize it more later and add stuff to : C:\Users\MCC\Rag_Crew_Profiler\openevolve\AgentSocietyChallenge_OpenEvolve\config\agents_evolving.yaml
+
+I WILL SEE THE BEST BUT NOW I HAVE TO FOCUS ON LAB 15 SINCE I ALREADY RAN OPENEVOLVE TEST AS PROFESSOR ASKED AND IT RAN FOR 2 HOURS AND I GOT FAIR RESULT. WORSE THAN MY CLASSMATES THO LOL! 
+
+
